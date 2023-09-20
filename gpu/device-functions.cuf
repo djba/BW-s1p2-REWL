@@ -1,0 +1,215 @@
+module device_functions
+
+   use parameters
+
+contains
+
+   attributes(device) subroutine find_sublattice_d(i, j, sl)
+
+      implicit none
+      integer :: i, j, sl
+
+      if (mod(i, 3) == 0 .and. mod(j, 3) == 0) then
+         sl = 1
+      end if
+      if (mod(i, 3) == 1 .and. mod(j, 3) == 1) then
+         sl = 1
+      end if
+      if (mod(i, 3) == 2 .and. mod(j, 3) == 2) then
+         sl = 1
+      end if
+
+      if (mod(i, 3) == 2 .and. mod(j, 3) == 1) then
+         sl = 2
+      end if
+      if (mod(i, 3) == 0 .and. mod(j, 3) == 2) then
+         sl = 2
+      end if
+      if (mod(i, 3) == 1 .and. mod(j, 3) == 0) then
+         sl = 2
+      end if
+
+      if (mod(i, 3) == 0 .and. mod(j, 3) == 1) then
+         sl = 3
+      end if
+      if (mod(i, 3) == 1 .and. mod(j, 3) == 2) then
+         sl = 3
+      end if
+      if (mod(i, 3) == 2 .and. mod(j, 3) == 0) then
+         sl = 3
+      end if
+
+   end subroutine find_sublattice_d
+
+   attributes(global) subroutine wl(latt, wlp, E_min, E_max, ran)
+
+      implicit none
+
+      type(lattice) :: latt
+      type(wl_parameters) :: wlp
+
+      integer :: idx, bid, tid, r, step, pos, s_old, s_new, i, j
+      integer :: a, b, c, d, e_old, e_new, index_old, index_new, in_interval
+      integer :: energy_old, energy_new, tr, nw
+      integer :: E_min(:), ran(:), E_max(:)
+      double precision :: factor, lnf
+      integer :: e_index_old, e_index_new, istat, m1_old, m2_old, m3_old
+      integer :: m1_new, m2_new, m3_new, sl
+      double precision :: m_old, m_new
+
+      idx = (blockIdx%x - 1)*blockDim%x + threadIdx%x
+
+      bid = (idx - 1)/NR + 1
+      tid = mod(idx - 1, NR) + 1
+
+      nw = (4*N)/deltaE - 1
+
+      if (idx <= nw*NR) then
+
+         r = ran(idx)
+
+         lnf = wlp%lnf
+
+         do step = 1, N
+            r = r*RANDOM_A + RANDOM_B
+            pos = int(abs(r*4.656612e-10)*N)
+            i = mod(pos, L) + 1
+            j = pos/L + 1
+
+            call find_sublattice_d(i, j, sl)
+
+            if (i == 1) then
+               a = L
+            else
+               a = i - 1
+            end if
+            if (i == L) then
+               b = 1
+            else
+               b = i + 1
+            end if
+            if (j == 1) then
+               c = L
+            else
+               c = j - 1
+            end if
+            if (j == L) then
+               d = 1
+            else
+               d = j + 1
+            end if
+
+            tr = (bid - 1)*N*NR + (tid - 1)*N
+
+            s_old = latt%s((i - 1)*L + j + tr)
+            r = r*RANDOM_A + RANDOM_B
+            s_new = -s_old
+
+            m1_old = latt%M1(idx)
+            m2_old = latt%M2(idx)
+            m3_old = latt%M3(idx)
+
+            m_old = sqrt(3*dble(m1_old**2 + m2_old**2 + m3_old**2))/N
+
+            if (sl == 1) then
+               m1_new = latt%M1(idx) + s_new - s_old
+               m2_new = latt%M2(idx)
+               m3_new = latt%M3(idx)
+            end if
+            if (sl == 2) then
+               m1_new = latt%M1(idx)
+               m2_new = latt%M2(idx) + s_new - s_old
+               m3_new = latt%M3(idx)
+            end if
+            if (sl == 3) then
+               m1_new = latt%M1(idx)
+               m2_new = latt%M2(idx)
+               m3_new = latt%M3(idx) + s_new - s_old
+            end if
+
+            m_new = sqrt(3*dble(m1_new**2 + m2_new**2 + m3_new**2))/N
+
+            e_old = -s_old*(latt%s((a - 1)*L + j + tr)*latt%s((i - 1)*L + c + tr) + &
+                            latt%s((i - 1)*L + c + tr)*latt%s((b - 1)*L + c + tr) + &
+                            latt%s((b - 1)*L + c + tr)*latt%s((b - 1)*L + j + tr) + &
+                            latt%s((b - 1)*L + j + tr)*latt%s((i - 1)*L + d + tr) + &
+                            latt%s((i - 1)*L + d + tr)*latt%s((a - 1)*L + d + tr) + &
+                            latt%s((a - 1)*L + d + tr)*latt%s((a - 1)*L + j + tr))
+            e_new = -s_new*(latt%s((a - 1)*L + j + tr)*latt%s((i - 1)*L + c + tr) + &
+                            latt%s((i - 1)*L + c + tr)*latt%s((b - 1)*L + c + tr) + &
+                            latt%s((b - 1)*L + c + tr)*latt%s((b - 1)*L + j + tr) + &
+                            latt%s((b - 1)*L + j + tr)*latt%s((i - 1)*L + d + tr) + &
+                            latt%s((i - 1)*L + d + tr)*latt%s((a - 1)*L + d + tr) + &
+                            latt%s((a - 1)*L + d + tr)*latt%s((a - 1)*L + j + tr))
+
+            energy_old = latt%E(idx)
+            energy_new = energy_old + (e_new - e_old)
+
+            index_old = (energy_old - E_min(bid))/4 + 1
+            index_new = (energy_new - E_min(bid))/4 + 1
+            index_old = index_old + (idx - 1)*(deltaE/4 + 1)
+            index_new = index_new + (idx - 1)*(deltaE/4 + 1)
+
+            if (energy_old == -2*N) then
+               e_index_old = 1
+            end if
+            if (energy_old == -2*N + 12) then
+               e_index_old = 2
+            end if
+            if (energy_old > -2*N + 12) then
+               e_index_old = (energy_old + 2*N - 12)/4 + 2
+            end if
+
+            if (energy_new == -2*N) then
+               e_index_new = 1
+            end if
+            if (energy_new == -2*N + 12) then
+               e_index_new = 2
+            end if
+            if (energy_new > -2*N + 12) then
+               e_index_new = (energy_new + 2*N - 12)/4 + 2
+            end if
+
+            factor = 0
+            in_interval = 0
+
+            if (energy_new >= E_min(bid) .and. energy_new <= E_max(bid)) then
+               in_interval = 1
+            end if
+
+            if (in_interval == 1) then
+               factor = exp(wlp%lng(index_old) - wlp%lng(index_new))
+            end if
+
+            r = r*RANDOM_A + RANDOM_B
+
+            if (factor > abs(r*4.656612e-10) .and. in_interval == 1) then
+               wlp%lng(index_new) = wlp%lng(index_new) + lnf
+               wlp%H(index_new) = wlp%H(index_new) + 1
+               latt%E(idx) = energy_new
+               latt%s((i - 1)*L + j + tr) = s_new
+
+               latt%M1(idx) = m1_new
+               latt%M2(idx) = m2_new
+               latt%M3(idx) = m3_new
+
+               istat = atomicadd(wlp%m2_av(e_index_new), m_new*m_new)
+               istat = atomicadd(wlp%m_av(e_index_new), m_new)
+               istat = atomicadd(wlp%count_e(e_index_new), 1)
+            else
+               wlp%lng(index_old) = wlp%lng(index_old) + lnf
+               wlp%H(index_old) = wlp%H(index_old) + 1
+               istat = atomicadd(wlp%m2_av(e_index_old), m_old*m_old)
+               istat = atomicadd(wlp%m_av(e_index_old), m_old)
+               istat = atomicadd(wlp%count_e(e_index_old), 1)
+            end if
+
+         end do
+
+         ran(idx) = r
+
+      end if
+
+   end subroutine wl
+
+end module device_functions

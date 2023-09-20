@@ -1,0 +1,53 @@
+module parameters
+
+  implicit none
+
+  integer, parameter :: L = 252
+  integer, parameter :: N = L*L
+  integer, parameter :: stage0 = 20
+  integer, parameter :: replica_step = 64
+  integer, parameter :: flatness_step = 256
+  integer, parameter :: deltaE = 504
+  integer, parameter :: NR = 4
+  integer, parameter :: BLOCK_SIZE = 16
+  integer, parameter :: unit = 6
+  integer, parameter :: lng_unit = 1
+  double precision, parameter :: eps_min = 5D-3
+  double precision, parameter :: T_min = 2.2
+  double precision, parameter :: T_max = 2.3
+
+  integer, parameter :: RANDOM_A = 1664525
+  integer, parameter :: RANDOM_B = 1013904223
+
+  type lattice_init
+     integer, allocatable :: s(:);
+     integer :: E;
+     integer :: M1;
+     integer :: M2;
+     integer :: M3;
+  end type lattice_init
+
+  type wl_parameters_init
+     integer, allocatable :: H(:);
+     double precision, allocatable :: lng(:);
+     double precision :: lnf;
+  end type wl_parameters_init
+
+  type lattice
+     integer, allocatable, managed :: s(:);
+     integer, allocatable, managed :: E(:);
+     integer, allocatable, managed:: M1(:);
+     integer, allocatable, managed:: M2(:);
+     integer, allocatable, managed:: M3(:);
+  end type lattice
+
+  type wl_parameters
+     double precision, managed :: lnf;
+     double precision, allocatable, managed :: lng(:);
+     integer, allocatable, managed :: H(:);
+     double precision, allocatable, managed :: m_av(:);
+     double precision, allocatable, managed :: m2_av(:);
+     integer, allocatable, managed :: count_e(:);
+  end type wl_parameters
+
+end module parameters

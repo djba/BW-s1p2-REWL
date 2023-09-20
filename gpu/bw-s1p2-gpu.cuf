@@ -1,0 +1,324 @@
+program bw
+
+   use parameters
+   use host_functions
+   use device_functions
+
+   implicit none
+
+   type(lattice_init) :: latt_init
+   type(wl_parameters_init) :: wlp_init
+   type(lattice), managed :: latt
+   type(wl_parameters), managed :: wlp
+   integer, allocatable :: E_min(:), E_max(:)
+   integer :: nw, i, j, E, prepare, finish_prepare, step, w, is_flat, stage, m_test
+   integer :: finished, finish_test, count_tot, count_accept, repeat, N_BLOCKS, nl
+   double precision :: rn, Tc_CV, Tc_0, delta_Tc, CV_max, CV_max_0, eps
+
+   integer, allocatable :: ran_h(:)
+   double precision, allocatable :: lng_av(:), lng_final(:)
+
+   integer, allocatable, device :: E_min_d(:), ran_d(:), E_max_d(:)
+
+   character(len=1024) :: filename
+   character(len=1024) :: format_string, format_string1, format_string2
+   character(len=32) :: repeat_string
+
+   integer r_time(8)
+   integer seed(2)
+
+   real :: t1, t2, etime, time
+   real :: elapsed(2)
+
+   allocate (latt_init%s(N))
+
+   nw = (4*N)/deltaE - 1
+
+   write (unit, '(a,i3)') "L = ", L
+   write (unit, '(a,i)') "nw = ", nw
+   if (mod(nw, BLOCK_SIZE/NR)==0) then
+      N_BLOCKS = nw/(BLOCK_SIZE/NR)
+   else
+      N_BLOCKS = nw/(BLOCK_SIZE/NR) + 1
+   end if
+   write (unit, '(a,i)') "N_BLOCKS = ", N_BLOCKS
+   write (unit, '(a,i)') "BLOCK_SIZE = ", BLOCK_SIZE
+   call flush (unit)
+   allocate (E_min(nw))
+   allocate (E_max(nw))
+
+   write (unit, '(a,e10.2)') "eps_min = ", eps_min
+   write (unit, '(a,f4.2)') "T_min = ", T_min
+   write (unit, '(a,f4.2)') "T_max = ", T_max
+
+   call n_levels(nl)
+
+   write (unit, '(a,i)') "nl = ", nl
+
+   allocate (wlp_init%lng(nl))
+   allocate (wlp_init%H(nl))
+
+   allocate (latt%s(nw*NR*N))
+   allocate (wlp%lng(nw*(deltaE/4 + 1)*NR))
+   allocate (lng_av(nw*(deltaE/4 + 1)))
+   allocate (wlp%H(nw*(deltaE/4 + 1)*NR))
+   allocate (latt%E(nw*NR))
+   allocate (latt%M1(nw*NR))
+   allocate (latt%M2(nw*NR))
+   allocate (latt%M3(nw*NR))
+   allocate (ran_h(nw*NR))
+   allocate (lng_final(nl))
+   allocate (wlp%m2_av(nl))
+   allocate (wlp%m_av(nl))
+   allocate (wlp%count_e(nl))
+
+   allocate (E_min_d(nw))
+   allocate (E_max_d(nw))
+   allocate (ran_d(nw*NR))
+
+   if (L<100) then
+      format_string1 = "(A7,I2,A1,I1,A4)"
+      format_string2 = "(A7,I2,A1,I2,A4)"
+   else
+      format_string1 = "(A7,I3,A1,I1,A4)"
+      format_string2 = "(A7,I3,A1,I2,A4)"
+   end if
+
+   call getarg(1, repeat_string)
+
+   read (repeat_string, *) repeat
+
+   write (unit, '(a,i3)') "repeat = ", repeat
+
+   if (repeat<10) then
+      format_string = format_string1
+   else
+      format_string = format_string2
+   end if
+
+   write (filename, format_string) "bw-gpu-", L, "-", repeat, ".txt"
+
+   call prepare_windows(E_min, E_max, nw)
+
+   call flush (unit)
+
+   call date_and_time(values=r_time)
+   seed(1) = r_time(4)*(360000*r_time(5) + 6000*r_time(6) + 100*r_time(7) + r_time(8))
+   call random_seed(put=seed)
+
+   t1 = etime(elapsed)
+
+   wlp_init%lnf = 1.0
+
+   prepare = 0
+
+   do while (prepare==0)
+      do i = 1, L
+         do j = 1, L
+            call random_number(rn)
+            if (rn>0.5) then
+               latt_init%s((i - 1)*L + j) = 1
+            else
+               latt_init%s((i - 1)*L + j) = -1
+            end if
+         end do
+      end do
+
+      call calc_energy_mag(latt_init)
+
+      if (latt_init%E<=0) then
+         prepare = 1
+      end if
+   end do
+
+   do i = 1, nl
+      wlp_init%lng(i) = 0
+      wlp_init%H(i) = 0
+   end do
+
+   do w = 1, nw
+
+      do step = 1, NR
+
+         finish_prepare = 0
+         do while (finish_prepare==0)
+            call wl_step(latt_init, wlp_init)
+
+            if (latt_init%E>E_min(w) .and. latt_init%E<E_max(w)) then
+               finish_prepare = 1
+            end if
+
+         end do
+
+         latt%E((w - 1)*NR + step) = latt_init%E
+         latt%M1((w - 1)*NR + step) = latt_init%M1
+         latt%M2((w - 1)*NR + step) = latt_init%M2
+         latt%M3((w - 1)*NR + step) = latt_init%M3
+
+         do i = 1, L
+            do j = 1, L
+               latt%s((w - 1)*N*NR + (step - 1)*N + (i - 1)*L + j) = &
+                  latt_init%s((i - 1)*L + j)
+            end do
+         end do
+
+         do i = 1, 100
+            call wl_step(latt_init, wlp_init)
+         end do
+
+      end do
+
+   end do
+
+   do i = 1, nw*NR
+      do j = 1, deltaE/4 + 1
+         wlp%lng((i - 1)*(deltaE/4 + 1) + j) = 0
+         wlp%H((i - 1)*(deltaE/4 + 1) + j) = 0
+      end do
+   end do
+
+   do i = 1, nl
+      lng_final(i) = 0
+      wlp%m2_av(i) = 0
+      wlp%m_av(i) = 0
+      wlp%count_e(i) = 0
+   end do
+
+   E_min_d = E_min
+   E_max_d = E_max
+
+   call random_number(rn)
+   ran_h(1) = 1234567*rn
+
+   do i = 2, nw*NR
+      ran_h(i) = 16807*ran_h(i - 1)
+   end do
+
+   ran_d = ran_h
+
+   wlp%lnf = 1.0
+
+   stage = 1
+   finished = 0
+
+   count_tot = 0
+   count_accept = 0
+
+   do while (finished==0)
+
+      finish_test = 1
+
+      is_flat = 0
+      step = 0
+      m_test = 0
+
+      do while (is_flat==0)
+         call wl<<<N_BLOCKS, BLOCK_SIZE>>>(latt, wlp, E_min_d, E_max_d, ran_d)
+         step = step + 1
+
+         if (stage>=stage0 .and. step==1) then
+            call average_lng(wlp%lng, lng_av, nw, 0)
+            call calc_lng(lng_av, lng_final, nw, E_min, nl)
+            call calc_Tc_CV(lng_final, Tc_CV, CV_max, nl)
+            Tc_0 = Tc_CV
+            CV_max_0 = CV_max
+            write (unit, '(a,f8.6)') "Tc_0 = ", Tc_0
+            write (unit, '(a,f12.6)') "CV_max_0 = ", CV_max_0
+         end if
+         call flush (unit)
+
+         if (mod(step, replica_step)==0) then
+            call replica_exchange(latt, wlp%lng, E_min, E_max, nw, &
+                                  count_tot, count_accept)
+         end if
+
+         if (mod(step, flatness_step)==0) then
+
+            call flatness_test(wlp%H, is_flat, nw, E_min)
+
+            if (stage>=stage0) then
+               call average_lng(wlp%lng, lng_av, nw, 0)
+               call calc_lng(lng_av, lng_final, nw, E_min, nl)
+               call calc_Tc_CV(lng_final, Tc_CV, CV_max, nl)
+               delta_Tc = abs(Tc_CV - Tc_0)
+               eps = abs(CV_max - CV_max_0)/CV_max_0
+               if (eps>=eps_min) then
+                  finish_test = 0
+               end if
+               write (unit, '(a,f8.6,a,f8.6)') "Tc_CV = ", &
+                  Tc_CV, "     delta_Tc = ", delta_Tc
+               write (unit, '(a,f12.6,a,f8.6)') "CV_max = ", CV_max, "     eps = ", eps
+            end if
+            call flush (unit)
+
+         end if
+      end do
+
+      write (unit, '(a,i3,a,i)') "Finished stage ", stage, "     step = ", step
+      call flush (unit)
+
+      if (stage>=stage0 + 1 .and. finish_test==1) then
+         finished = 1
+      end if
+
+      stage = stage + 1
+
+      wlp%lnf = wlp%lnf/2.0
+      do i = 1, nw*NR
+         do j = 1, deltaE/4 + 1
+            wlp%H((i - 1)*(deltaE/4 + 1) + j) = 0
+         end do
+      end do
+
+      call average_lng(wlp%lng, lng_av, nw, 1)
+
+   end do
+
+   t2 = etime(elapsed)
+
+   time = t2 - t1
+
+   write (unit, '(a,i,a,i)') "count_tot = ", count_tot, &
+      "     count_accept = ", count_accept
+   write (unit, '(a,f)') "Time = ", time
+
+   call flush (unit)
+
+   call average_lng(wlp%lng, lng_av, nw, 1)
+
+   do i = 1, nl
+      lng_final(i) = 0
+   end do
+
+   call calc_lng(lng_av, lng_final, nw, E_min, nl)
+
+   open (lng_unit, file=filename)
+
+   do i = 1, nl
+
+      if (i==1) then
+         E = -2*N
+      end if
+      if (i==2) then
+         E = -2*N + 12
+      end if
+      if (i>2) then
+         E = -2*N + 12 + (i - 2)*4
+      end if
+
+      write (unit, '(i,g,g,g)') E, lng_final(i), wlp%m_av(i)/wlp%count_e(i), &
+         wlp%m2_av(i)/wlp%count_e(i)
+      write (lng_unit, '(i,g,g,g)') E, lng_final(i), wlp%m_av(i)/wlp%count_e(i), &
+         wlp%m2_av(i)/wlp%count_e(i)
+
+   end do
+
+   close (lng_unit)
+
+   call calc_Tc_CV(lng_final, Tc_CV, CV_max, nl)
+
+   write (unit, '(a,f8.6)') "Tc_CV = ", Tc_CV
+   write (unit, '(a,f12.6)') "CV_max = ", CV_max
+   call flush (unit)
+
+end program bw
