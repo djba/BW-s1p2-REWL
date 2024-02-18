@@ -2,12 +2,12 @@ module parameters
 
   implicit none
 
-  integer, parameter :: L = 252
+  integer, parameter :: L = 36
   integer, parameter :: N = L*L
   integer, parameter :: stage0 = 20
   integer, parameter :: replica_step = 64
   integer, parameter :: flatness_step = 256
-  integer, parameter :: deltaE = 504
+  integer, parameter :: deltaE = 72
   integer, parameter :: NR = 4
   integer, parameter :: BLOCK_SIZE = 16
   integer, parameter :: unit = 6
