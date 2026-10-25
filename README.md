@@ -1,4 +1,4 @@
-CUDA Fortran programs for the simulation of the spin-$1/2$ Baxter-Wu model using replica exchange Wang-Landau sampling
+CUDA Fortran programs for the simulation of the spin-$1/2$ Baxter-Wu model using replica exchange Wang-Landau sampling (A. Boer boera@unitbv.ro)
 
 All the necessary files are provided in the gpu directory. The source code is structured as follows:
 - Makefile
